@@ -1,24 +1,40 @@
-"""Success detection tool for validating object placements."""
+"""Detect success tool - validates object placement using vision model."""
 import logging
 import math
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
+from .base_tool import BaseTool
 
 logger = logging.getLogger(__name__)
 
 
-class DetectSuccessTool:
-    """Tool to validate if an object was successfully placed at target coordinates."""
+class DetectSuccessTool(BaseTool):
+    """
+    Tool for validating if an object was placed correctly.
+    
+    Uses MDETR to detect the object, converts its center to 3D,
+    calculates distance loss from target position, and returns
+    success/failure based on threshold.
+    """
     
     def __init__(self, environment):
-        """Initialize success detection tool with environment."""
+        """Initialize detect success tool with environment."""
         self.environment = environment
+        self.wrapper = None  # Set externally
         self.name = "detect_success"
-        self.description = "Validate if an object was successfully placed at target coordinates"
-        self.threshold = 0.04  # 4 cm threshold as requested
+        self.description = "Validate if object placement was successful"
         
-        # Import tool wrapper for accurate position detection
-        from orchestration.tool_wrapper import EnvironmentToolWrapper
-        self.wrapper = EnvironmentToolWrapper(environment)
+        # Success threshold in meters
+        self.distance_threshold = 0.04  # 4cm tolerance
+        
+        # TODO: Initialize MDETR model here
+        # self.mdetr_model = load_mdetr_model()
+        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Camera intrinsics - TODO: Get from actual camera setup
+        # self.fx = 525.0
+        # self.fy = 525.0
+        # self.cx = 320.0
+        # self.cy = 240.0
     
     def get_schema(self) -> Dict[str, Any]:
         """Get the tool schema for LLM function calling."""
@@ -26,187 +42,206 @@ class DetectSuccessTool:
             "type": "function",
             "function": {
                 "name": "detect_success",
-                "description": "Validate if an object was successfully placed at the target coordinates within 4cm threshold and return updated context with actual object positions.",
+                "description": "Validate if an object was placed at the target position. Returns success/failure based on distance threshold.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "object_name": {
                             "type": "string",
-                            "description": "Name of the object that was placed (e.g., 'red_box', 'blue_box')"
+                            "description": "Name of the object to validate"
                         },
                         "target_x": {
                             "type": "number",
-                            "description": "Target X coordinate that was passed to place command"
+                            "description": "Target X coordinate in meters"
                         },
                         "target_y": {
-                            "type": "number", 
-                            "description": "Target Y coordinate that was passed to place command"
+                            "type": "number",
+                            "description": "Target Y coordinate in meters"
                         },
                         "target_theta": {
                             "type": "number",
-                            "description": "Target theta orientation that was passed to place command"
+                            "description": "Target rotation in radians"
                         },
                         "context": {
                             "type": "object",
-                            "description": "Current LLM context containing all object coordinates and dimensions from scene_info",
-                            "properties": {
-                                "objects": {
-                                    "type": "array",
-                                    "description": "List of all objects with their coordinates and dimensions"
-                                },
-                                "scene_description": {
-                                    "type": "string",
-                                    "description": "Description of the current scene"
-                                }
-                            }
+                            "description": "Scene context (optional)"
                         }
                     },
-                    "required": ["object_name", "target_x", "target_y", "target_theta", "context"]
+                    "required": ["object_name", "target_x", "target_y", "target_theta"]
                 }
             }
         }
     
-    def execute(self, object_name: str, target_x: float, target_y: float, target_theta: float, context: Dict[str, Any]) -> Dict[str, Any]:
+    def _get_camera_image_and_depth(self) -> Tuple[Any, Any]:
         """
-        Validate object placement by comparing actual vs target coordinates and return updated context.
+        Capture RGB image and depth map from PyBullet camera.
+        
+        TODO: Implement camera capture from PyBullet environment
+        """
+        # TODO: Same as in detect_tool.py
+        pass
+    
+    def _run_mdetr_detection(self, image, object_name: str) -> Dict[str, Any]:
+        """
+        Run MDETR model to detect specific object.
+        
+        TODO: Implement MDETR inference
+        """
+        # TODO: Same as in detect_tool.py
+        pass
+    
+    def _convert_2d_to_3d(self, center_2d: Tuple[float, float], depth_map) -> Tuple[float, float, float]:
+        """
+        Convert 2D pixel coordinates to 3D world coordinates.
+        
+        TODO: Implement 2D to 3D projection
+        """
+        # TODO: Same as in detect_tool.py
+        pass
+    
+    def _calculate_placement_loss(
+        self, 
+        actual_pos: Tuple[float, float, float],
+        target_pos: Tuple[float, float, float]
+    ) -> float:
+        """
+        Calculate Euclidean distance loss between actual and target positions.
         
         Args:
-            object_name: Name of the placed object
-            target_x: Target X coordinate from place command
-            target_y: Target Y coordinate from place command  
-            target_theta: Target theta from place command
-            context: Current LLM context with all object positions and dimensions
+            actual_pos: (x, y, z) actual position from detection
+            target_pos: (x, y, z) target position
             
         Returns:
-            Dict with success status, detailed feedback, and updated context with actual object positions
+            Distance in meters
+        """
+        dx = actual_pos[0] - target_pos[0]
+        dy = actual_pos[1] - target_pos[1]
+        # Note: We primarily care about x,y placement, z should be on surface
+        distance = math.sqrt(dx**2 + dy**2)
+        return distance
+    
+    def execute(
+        self, 
+        object_name: str, 
+        target_x: float, 
+        target_y: float, 
+        target_theta: float,
+        context: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Validate object placement success.
+        
+        Uses MDETR to detect object, converts to 3D, calculates loss,
+        returns true/false based on distance threshold.
         """
         print(f"🔍 Validating placement of {object_name} at target ({target_x:.3f}, {target_y:.3f}, θ={target_theta:.2f})...")
         
         try:
-            # Get fresh object positions using the wrapper that works correctly
-            scene_info = self.wrapper.get_scene_info()
+            # TODO: Replace this with MDETR-based detection and validation
+            # ============================================================
+            # MDETR INTEGRATION POINT
+            # ============================================================
+            #
+            # Step 1: Capture camera image and depth
+            # image, depth_map = self._get_camera_image_and_depth()
+            #
+            # Step 2: Run MDETR to detect the placed object
+            # detection = self._run_mdetr_detection(image, object_name)
+            #
+            # if detection is None:
+            #     return {
+            #         "success": False,
+            #         "feedback": f"Could not detect {object_name} - placement may have failed",
+            #         "object_name": object_name
+            #     }
+            #
+            # Step 3: Convert detected 2D center to 3D world coordinates
+            # actual_x, actual_y, actual_z = self._convert_2d_to_3d(
+            #     detection['center_2d'], depth_map
+            # )
+            #
+            # Step 4: Calculate placement loss (distance from target)
+            # distance = self._calculate_placement_loss(
+            #     (actual_x, actual_y, actual_z),
+            #     (target_x, target_y, 0.0)  # z target is surface level
+            # )
+            #
+            # Step 5: Determine success based on threshold
+            # success = distance <= self.distance_threshold
+            #
+            # ============================================================
             
-            # Find the object in the scene
-            target_object = None
-            for obj in scene_info.get('objects', []):
-                if obj.get('name') == object_name:
-                    target_object = obj
-                    break
+            # PLACEHOLDER: Get actual position from PyBullet environment
+            # This will be replaced by MDETR detection
             
-            if target_object is None:
+            if not hasattr(self.environment, 'env'):
                 return {
                     "success": False,
-                    "object_name": object_name,
-                    "error": f"Object {object_name} not found in scene",
-                    "distance": None,
-                    "updated_context": context  # Return original context on error
+                    "feedback": "Environment not initialized",
+                    "object_name": object_name
                 }
             
-            # Get actual object position from scene info
-            center = target_object.get('center', {})
-            actual_x = center.get('x', 0)
-            actual_y = center.get('y', 0)
-            actual_z = center.get('z', 0)
+            if object_name not in self.environment.env.objects:
+                return {
+                    "success": False,
+                    "feedback": f"Object '{object_name}' not found in environment",
+                    "object_name": object_name
+                }
             
-            # Calculate distance from target
-            distance = math.sqrt((actual_x - target_x)**2 + (actual_y - target_y)**2)
+            # PLACEHOLDER: Get position from PyBullet (to be replaced by MDETR)
+            position = self.environment.env.get_position(object_name)
+            actual_x, actual_y, actual_z = position[0], position[1], position[2]
             
             print(f"📍 Actual position: ({actual_x:.3f}, {actual_y:.3f})")
             print(f"🎯 Target position: ({target_x:.3f}, {target_y:.3f})")
-            print(f"📏 Distance: {distance:.3f}m (threshold: {self.threshold:.3f}m)")
             
-            # Check if within threshold
-            success = distance <= self.threshold
+            # Calculate distance loss
+            distance = self._calculate_placement_loss(
+                (actual_x, actual_y, actual_z),
+                (target_x, target_y, 0.0)
+            )
+            
+            print(f"📏 Distance: {distance:.3f}m (threshold: {self.distance_threshold:.3f}m)")
+            
+            # Determine success
+            success = distance <= self.distance_threshold
             
             if success:
-                feedback = f"✅ SUCCESS: {object_name} placed within {distance*100:.1f}cm of target (threshold: {self.threshold*100:.0f}cm)"
+                feedback = f"✅ SUCCESS: {object_name} placed within {distance*100:.1f}cm of target (threshold: {self.distance_threshold*100:.0f}cm)"
                 print(f"   {feedback}")
             else:
-                feedback = f"❌ FAILED: {object_name} is {distance*100:.1f}cm from target (threshold: {self.threshold*100:.0f}cm)"
+                feedback = f"❌ FAILED: {object_name} is {distance*100:.1f}cm away from target (threshold: {self.distance_threshold*100:.0f}cm)"
                 print(f"   {feedback}")
             
-            # Update context with actual object position
-            updated_context = self._update_context_with_actual_position(
-                context, object_name, actual_x, actual_y, actual_z
-            )
+            # Update context with actual position
+            updated_context = context.copy() if context else {}
+            if 'objects' in updated_context:
+                for obj in updated_context['objects']:
+                    if obj.get('name') == object_name:
+                        obj['center'] = {'x': actual_x, 'y': actual_y, 'z': actual_z}
+                        break
+            
+            print(f"🔄 Updated {object_name} position in context: ({actual_x:.3f}, {actual_y:.3f}, {actual_z:.3f})")
             
             return {
                 "success": success,
+                "feedback": feedback,
                 "object_name": object_name,
                 "target_position": {"x": target_x, "y": target_y, "theta": target_theta},
                 "actual_position": {"x": actual_x, "y": actual_y, "z": actual_z},
                 "distance": distance,
-                "threshold": self.threshold,
-                "feedback": feedback,
+                "threshold": self.distance_threshold,
                 "updated_context": updated_context
             }
             
         except Exception as e:
             error_result = {
                 "success": False,
-                "object_name": object_name,
-                "error": f"Exception during validation: {str(e)}",
-                "distance": None,
-                "updated_context": context  # Return original context on error
+                "feedback": f"Validation error: {str(e)}",
+                "object_name": object_name
             }
             print(f"   ❌ Error: {str(e)}")
             return error_result
-    
-    def _update_context_with_actual_position(self, context: Dict[str, Any], object_name: str, actual_x: float, actual_y: float, actual_z: float) -> Dict[str, Any]:
-        """
-        Update the context with the actual position of the placed object.
-        
-        Args:
-            context: Original context with object information
-            object_name: Name of the object that was placed
-            actual_x, actual_y, actual_z: Actual position from environment
-            
-        Returns:
-            Updated context with corrected object position
-        """
-        updated_context = {
-            "objects": [],
-            "scene_description": context.get("scene_description", "Scene with objects")
-        }
-        
-        # Copy all objects and update the placed object's position
-        for obj in context.get("objects", []):
-            if obj.get("name") == object_name:
-                # Update this object with actual position
-                updated_obj = obj.copy()
-                updated_obj["center"] = {
-                    "x": actual_x,
-                    "y": actual_y, 
-                    "z": actual_z
-                }
-                
-                # Also update bounds if they exist
-                if "dimensions" in updated_obj:
-                    dims = updated_obj["dimensions"]
-                    width = dims.get("width", 0.035)
-                    height = dims.get("height", 0.035)
-                    depth = dims.get("depth", 0.035)
-                    
-                    updated_obj["bounds"] = {
-                        "min": {
-                            "x": actual_x - width/2,
-                            "y": actual_y - height/2,
-                            "z": actual_z - depth/2
-                        },
-                        "max": {
-                            "x": actual_x + width/2,
-                            "y": actual_y + height/2,
-                            "z": actual_z + depth/2
-                        }
-                    }
-                
-                updated_context["objects"].append(updated_obj)
-                print(f"🔄 Updated {object_name} position in context: ({actual_x:.3f}, {actual_y:.3f}, {actual_z:.3f})")
-            else:
-                # Keep other objects unchanged
-                updated_context["objects"].append(obj.copy())
-        
-        return updated_context
     
     def __call__(self, **kwargs) -> Dict[str, Any]:
         """Make the tool callable."""
@@ -215,5 +250,5 @@ class DetectSuccessTool:
             target_x=kwargs.get("target_x", 0.0),
             target_y=kwargs.get("target_y", 0.0),
             target_theta=kwargs.get("target_theta", 0.0),
-            context=kwargs.get("context", {"objects": [], "scene_description": "Empty scene"})
+            context=kwargs.get("context", {})
         )
