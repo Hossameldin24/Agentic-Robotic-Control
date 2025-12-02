@@ -241,6 +241,14 @@ class PyBulletRobot:
 
         # initialize pose
         self.initialize_pose()
+        
+        # camera configuration
+        self.camera_offset = Pose(point=(0.0, 0.0, 0.0), euler=(0, 0, 0))  # Camera mounted at tool link
+        self.camera_width = 640
+        self.camera_height = 480
+        self.camera_fov = 60.0  # degrees
+        self.camera_near = 0.02
+        self.camera_far = 5.0
 
     def initialize_pose(self):
         home_conf = [0, -0.785398163397, 0, -2.35619449, 0, 1.57079632679, 0.78539816, 0.04, 0.04]
@@ -362,6 +370,113 @@ class PyBulletRobot:
     def release_gripper(self):
         self.attachments_robot = []
         self.last_grasp_direction = None
+    
+    def get_camera_pose(self):
+        """
+        Get the camera pose attached to the robot's tool link (end-effector).
+        
+        Returns:
+            tuple: (position, orientation) where:
+                - position: [x, y, z] in world coordinates
+                - orientation: [x, y, z, w] quaternion in world coordinates
+        """
+        # Get the tool link pose (end-effector pose)
+        tool_position, tool_orientation = get_link_pose(self.robot, self.tool_attach_link)
+        
+        # Apply camera offset to get camera pose in world frame
+        tool_pose = (tool_position, tool_orientation)
+        camera_pose = multiply(tool_pose, self.camera_offset)
+        
+        camera_position = camera_pose[0]
+        camera_orientation = camera_pose[1]
+        
+        return camera_position, camera_orientation
+    
+    def set_camera_offset(self, position=(0.0, 0.0, 0.0), euler=(0, 0, 0)):
+        """
+        Set the camera offset relative to the tool link.
+        
+        Args:
+            position: tuple of (x, y, z) offset from tool link
+            euler: tuple of (roll, pitch, yaw) rotation offset in radians
+        """
+        self.camera_offset = Pose(point=position, euler=euler)
+    
+    def get_camera_image(self, width=None, height=None, fov=None, near=None, far=None):
+        """
+        Capture an image from the camera mounted on the robot's end-effector.
+        
+        Args:
+            width: image width in pixels (defaults to self.camera_width)
+            height: image height in pixels (defaults to self.camera_height)
+            fov: vertical field of view in degrees (defaults to self.camera_fov)
+            near: near clipping plane distance (defaults to self.camera_near)
+            far: far clipping plane distance (defaults to self.camera_far)
+        
+        Returns:
+            dict: containing 'rgb', 'depth', 'segmentation', 'camera_position', 'camera_orientation'
+        """
+        # Use default values if not specified
+        width = width or self.camera_width
+        height = height or self.camera_height
+        fov = fov or self.camera_fov
+        near = near or self.camera_near
+        far = far or self.camera_far
+        
+        # Get camera pose
+        camera_position, camera_orientation = self.get_camera_pose()
+        
+        # Convert quaternion to rotation matrix to get camera forward direction
+        from scipy.spatial.transform import Rotation
+        rotation = Rotation.from_quat(camera_orientation)
+        camera_matrix = rotation.as_matrix()
+        
+        # Camera looks along its local -Z axis (OpenGL convention)
+        camera_forward = camera_matrix[:, 2]
+        camera_up = camera_matrix[:, 1]
+        
+        # Calculate target point along camera forward direction
+        target_position = camera_position + camera_forward * 1.0
+        
+        # Compute view matrix
+        view_matrix = p.computeViewMatrix(
+            cameraEyePosition=camera_position,
+            cameraTargetPosition=target_position,
+            cameraUpVector=camera_up
+        )
+        
+        # Compute projection matrix
+        aspect = float(width) / height
+        projection_matrix = p.computeProjectionMatrixFOV(
+            fov=fov,
+            aspect=aspect,
+            nearVal=near,
+            farVal=far
+        )
+        
+        # Capture image
+        img_width, img_height, rgb_img, depth_img, seg_img = p.getCameraImage(
+            width=width,
+            height=height,
+            viewMatrix=view_matrix,
+            projectionMatrix=projection_matrix,
+            renderer=p.ER_BULLET_HARDWARE_OPENGL
+        )
+        
+        # Convert images to numpy arrays
+        rgb_array = np.array(rgb_img, dtype=np.uint8).reshape(height, width, 4)[:, :, :3]  # Remove alpha
+        depth_array = np.array(depth_img, dtype=np.float32).reshape(height, width)
+        seg_array = np.array(seg_img, dtype=np.int32).reshape(height, width)
+        
+        return {
+            'rgb': rgb_array,
+            'depth': depth_array,
+            'segmentation': seg_array,
+            'camera_position': camera_position,
+            'camera_orientation': camera_orientation,
+            'view_matrix': view_matrix,
+            'projection_matrix': projection_matrix
+        }
 
     def verify_ik(self, targeted_pos, targeted_ori, joint_conf):
         original_conf = get_joint_positions(self.robot, self.ik_joints)
