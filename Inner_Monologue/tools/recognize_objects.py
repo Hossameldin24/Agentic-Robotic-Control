@@ -1,7 +1,10 @@
 """Recognize objects tool - uses vision model to detect all objects in scene."""
 import logging
 from typing import Dict, Any, List
+from PIL import Image
+import numpy as np
 from .base_tool import BaseTool
+from .detection_tool import DetectionTool
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +23,13 @@ class RecognizeObjectsTool(BaseTool):
         self.name = "recognize_objects"
         self.description = "Detect and return list of all object names in the scene"
         
-        # TODO: Initialize MDETR model here
-        # self.mdetr_model = load_mdetr_model()
-        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Initialize MDETR detection tool
+        self.detection_tool = DetectionTool(
+            environment=environment,
+            confidence_threshold=0.6,
+            iou_threshold=0.5
+        )
+        logger.info("Initialized DetectionTool for object recognition")
     
     def get_schema(self) -> Dict[str, Any]:
         """Get the tool schema for LLM function calling."""
@@ -33,66 +40,59 @@ class RecognizeObjectsTool(BaseTool):
                 "description": "Detect and return list of all object names currently visible in the scene using vision model.",
                 "parameters": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "fov": {
+                            "type": "number",
+                            "description": "Field of view in degrees for camera zoom (higher = more zoom out)"
+                        }
+                    },
                     "required": []
                 }
             }
         }
     
-    def _get_camera_image(self):
+    def _get_camera_image(self, fov=None):
         """
         Capture RGB image from PyBullet camera.
         
-        TODO: Implement camera capture from PyBullet environment
-        Returns: RGB image as numpy array (H, W, 3)
-        """
-        # TODO: Get camera image from PyBullet
-        # width, height = 640, 480
-        # view_matrix = p.computeViewMatrix(...)
-        # proj_matrix = p.computeProjectionMatrix(...)
-        # _, _, rgb, depth, seg = p.getCameraImage(width, height, view_matrix, proj_matrix)
-        # return rgb[:, :, :3]  # Return RGB only
-        pass
-    
-    def _run_mdetr_detection(self, image, prompt: str) -> List[Dict[str, Any]]:
-        """
-        Run MDETR model with given prompt on image.
+        Args:
+            fov: Field of view in degrees. Higher values = more zoom out. 
+                 Default is typically 60-90 degrees. Try 100-120 for wider view.
         
-        TODO: Implement MDETR inference
+        Returns: PIL Image object
+        """
+        if hasattr(self.environment, 'get_camera_image'):
+            # If environment has a method to get camera image
+            camera_data = self.environment.get_camera_image(fov=fov)
+            
+            # Handle dict return (LLM-TAMP format)
+            if isinstance(camera_data, dict) and 'rgb' in camera_data:
+                img_array = camera_data['rgb']
+            else:
+                img_array = camera_data
+            
+            # Convert numpy array to PIL Image
+            if isinstance(img_array, np.ndarray):
+                return Image.fromarray(img_array.astype('uint8'), 'RGB')
+            return img_array
+            
+        elif hasattr(self.environment, 'render'):
+            # Alternative: use render method
+            img_array = self.environment.render(mode='rgb_array')
+            if isinstance(img_array, np.ndarray):
+                return Image.fromarray(img_array.astype('uint8'), 'RGB')
+            return img_array
+        else:
+            raise NotImplementedError(
+                "Environment must implement either 'get_camera_image()' or 'render(mode=\"rgb_array\")' method"
+            )
+    
+    def execute(self, fov=None) -> Dict[str, Any]:
+        """
+        Execute object recognition using MDETR via DetectionTool.
         
         Args:
-            image: RGB image as numpy array
-            prompt: Detection prompt (e.g., "all objects you can see")
-            
-        Returns:
-            List of detections, each with:
-            - 'label': object name/class
-            - 'bbox': [x1, y1, x2, y2] bounding box
-            - 'score': confidence score
-        """
-        # TODO: Run MDETR inference
-        # inputs = self.processor(images=image, text=prompt, return_tensors="pt").to(self.device)
-        # with torch.no_grad():
-        #     outputs = self.mdetr_model(**inputs)
-        # 
-        # # Post-process to get boxes and labels
-        # target_sizes = torch.tensor([image.shape[:2]])
-        # results = self.processor.post_process_object_detection(outputs, target_sizes=target_sizes)[0]
-        # 
-        # detections = []
-        # for score, label, box in zip(results["scores"], results["labels"], results["boxes"]):
-        #     if score > 0.5:  # confidence threshold
-        #         detections.append({
-        #             'label': label,
-        #             'bbox': box.tolist(),
-        #             'score': score.item()
-        #         })
-        # return detections
-        pass
-    
-    def execute(self) -> Dict[str, Any]:
-        """
-        Execute object recognition using MDETR.
+            fov: Field of view in degrees for camera zoom (higher = more zoom out)
         
         Uses prompt "all objects you can see" to detect all objects.
         Returns list of unique object names found.
@@ -100,34 +100,52 @@ class RecognizeObjectsTool(BaseTool):
         print(f"👁️  Recognizing objects in scene...")
         
         try:
-            # TODO: Replace this hardcoded list with MDETR detection
-            # ============================================================
-            # MDETR INTEGRATION POINT
-            # ============================================================
-            # 
             # Step 1: Capture camera image
-            # image = self._get_camera_image()
-            #
-            # Step 2: Run MDETR with prompt
-            # prompt = "all objects you can see"
-            # detections = self._run_mdetr_detection(image, prompt)
-            #
-            # Step 3: Extract unique object names
-            # object_list = list(set([det['label'] for det in detections]))
-            #
-            # ============================================================
+            image = self._get_camera_image(fov=fov)
+            logger.info(f"Captured image of size: {image.size}")
             
-            # PLACEHOLDER: Hardcoded list for testing without MDETR
-            object_list = ["red_box", "blue_box", "green_box", "yellow_box", "basket"]
+            # Step 2: Run MDETR detection with broad prompt
+            prompt = "red box, blue box, green box, yellow box, brown basket and a robot on a light brown table"
+            bboxes, scores, detected_objects = self.detection_tool.detect_objects(image, prompt)
+            
+            # Step 3: Extract unique object names (filter out "unknown")
+            object_list = list(set([obj for obj in detected_objects if obj != "unknown"]))
+            
+            # Log detections
+            logger.info(f"Detected {len(detected_objects)} objects: {detected_objects}")
+            logger.info(f"Unique objects: {object_list}")
             
             result = {
                 "success": True,
                 "objects": object_list,
                 "count": len(object_list),
-                "feedback": f"Found {len(object_list)} objects in scene"
+                "detections": [
+                    {
+                        "name": obj,
+                        "confidence": score.item(),
+                        "bbox": bbox.tolist()
+                    }
+                    for obj, score, bbox in zip(detected_objects, scores, bboxes)
+                ],
+                "feedback": f"Found {len(object_list)} unique objects in scene"
             }
             
-            print(f"   ✅ Found {len(object_list)} objects: {', '.join(object_list)}")
+            print(f"   ✅ Found {len(object_list)} unique objects: {', '.join(object_list)}")
+            return result
+            
+        except NotImplementedError as e:
+            # Fallback to hardcoded list if camera not available
+            logger.warning(f"Camera not available: {str(e)}. Using fallback.")
+            object_list = ["red box", "blue box", "green box", "yellow box", "basket"]
+            
+            result = {
+                "success": True,
+                "objects": object_list,
+                "count": len(object_list),
+                "feedback": f"Using fallback: Found {len(object_list)} objects in scene"
+            }
+            
+            print(f"   ⚠️  Using fallback: {', '.join(object_list)}")
             return result
             
         except Exception as e:
@@ -138,8 +156,9 @@ class RecognizeObjectsTool(BaseTool):
                 "feedback": f"Exception: {str(e)}"
             }
             print(f"   ❌ Error: {str(e)}")
+            logger.error(f"Error in recognize_objects: {str(e)}", exc_info=True)
             return error_result
     
     def __call__(self, **kwargs) -> Dict[str, Any]:
         """Make the tool callable."""
-        return self.execute()
+        return self.execute(**kwargs)

@@ -27,7 +27,17 @@ class TaskPlanningAgent:
         """Initialize with available tools."""
         self.tools = tools
         genai.configure(api_key=GOOGLE_API_KEY)
-        self.model = genai.GenerativeModel("gemini-2.0-flash")
+        
+        # Configure generation settings with higher output token limit
+        generation_config = {
+            "temperature": 0.7,
+            "max_output_tokens": 8192,  # Increased to handle complex responses
+        }
+        
+        self.model = genai.GenerativeModel(
+            "gemini-2.0-flash",
+            generation_config=generation_config
+        )
         self.chat = None
         self.system_prompt = self._create_system_prompt()
         
@@ -39,9 +49,10 @@ Your task is to pack boxes into a basket by making strategic tool calls.
 
 AVAILABLE TOOLS:
 
-1. recognize_objects()
+1. recognize_objects(fov: float)   
    - Returns list of all object names in the scene
    - Call this FIRST to understand what objects exist
+   - if you think the results are incomplete, try increasing fov (field of view) to see more maximum fov value is 140
 
 2. detect(object_name: str)
    - Returns 3D center coordinates (x, y, z) of specified object in meters
@@ -68,6 +79,10 @@ AVAILABLE TOOLS:
    - Human will tell you where objects are placed, space remaining, any issues
    - Use this feedback to decide next action
    - Call after detect_success to understand scene state
+
+CRITICAL NOTE:
+    - Never call describe scene instead of recognize objects!
+    - describe_scene is ONLY for getting human feedback on scene state after actions
 
 WORKFLOW FOR EACH BOX:
 
@@ -156,6 +171,9 @@ When giving up:
             response = self.chat.send_message(context)
             response_text = response.text.strip()
             
+            # Log the raw response for debugging
+            logger.debug(f"Raw LLM response: {response_text[:500]}...")
+            
             # Remove markdown code blocks if present
             if response_text.startswith("```json"):
                 response_text = response_text.replace("```json", "").replace("```", "").strip()
@@ -166,17 +184,21 @@ When giving up:
             try:
                 action = json.loads(response_text)
                 return action
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
                 # Try fixing arithmetic expressions and parse again
                 fixed_text = self._fix_json_arithmetic(response_text)
                 try:
                     action = json.loads(fixed_text)
                     return action
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e2:
+                    # Log the problematic text for debugging
+                    logger.error(f"JSON parse error at position {e2.pos}: {e2.msg}")
+                    logger.error(f"Problematic text (first 1000 chars): {response_text[:1000]}")
+                    
                     # If still not valid JSON, return as reasoning
                     return {
-                        "reasoning": response_text,
-                        "error": "Response was not valid JSON"
+                        "reasoning": response_text[:500],  # Truncate to avoid huge error messages
+                        "error": f"Response was not valid JSON: {e2.msg} at position {e2.pos}"
                     }
                 
         except Exception as e:

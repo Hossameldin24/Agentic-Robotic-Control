@@ -23,7 +23,7 @@ def demo_environment():
     # Define some boxes to pack
     boxes_config = {
         0: {
-            "name": "red_box",
+            "name": "red box",
             "color": [1, 0, 0, 1],  # Red
             "w": 0.08,
             "l": 0.08,
@@ -33,7 +33,7 @@ def demo_environment():
             "z": 0.06
         },
         1: {
-            "name": "blue_box",
+            "name": "blue box",
             "color": [0, 0, 1, 1],  # Blue
             "w": 0.08,
             "l": 0.08,
@@ -43,7 +43,7 @@ def demo_environment():
             "z": 0.06
         },
         2: {
-            "name": "green_box",
+            "name": "green box",
             "color": [0, 1, 0, 1],  # Green
             "w": 0.08,
             "l": 0.08,
@@ -53,7 +53,7 @@ def demo_environment():
             "z": 0.06
         },
         3: {
-            "name": "yellow_box",
+            "name": "yellow box",
             "color": [1, 1, 0, 1],  # Yellow
             "w": 0.08,
             "l": 0.08,

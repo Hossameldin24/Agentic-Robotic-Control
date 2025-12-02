@@ -53,7 +53,7 @@ def run_agent_demo():
     agent = TaskPlanningAgent(tools)
     
     # Define the task
-    task = "Pack all colored boxes (red_box, blue_box, green_box, yellow_box) into the basket as compactly as possible."
+    task = "Pack all colored boxes (red box, blue box, green box, yellow box) into the brown basket as compactly as possible."
     
     print(f"\n📋 TASK: {task}\n")
     print("🚀 Starting agent...\n")

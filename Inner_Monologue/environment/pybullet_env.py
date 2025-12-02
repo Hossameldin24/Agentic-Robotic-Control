@@ -124,7 +124,7 @@ class InnerMonologueEnv:
         """Create default box configuration matching LLM-TAMP easy_box_medium_basket.json."""
         return {
             0: {
-                "name": "red_box",
+                "name": "red box",
                 "color": [1, 0, 0, 1],
                 "w": 0.035,  # Small box from LLM-TAMP
                 "l": 0.035,
@@ -134,7 +134,7 @@ class InnerMonologueEnv:
                 "z": 0.06
             },
             1: {
-                "name": "blue_box",
+                "name": "blue box",
                 "color": [0, 0, 1, 1],
                 "w": 0.07,   # Large box from LLM-TAMP
                 "l": 0.07,
@@ -144,7 +144,7 @@ class InnerMonologueEnv:
                 "z": 0.06
             },
             2: {
-                "name": "green_box",
+                "name": "green box",
                 "color": [0, 1, 0, 1],
                 "w": 0.035,  # Small box from LLM-TAMP
                 "l": 0.035,
@@ -154,7 +154,7 @@ class InnerMonologueEnv:
                 "z": 0.06
             },
             3: {
-                "name": "yellow_box",
+                "name": "yellow box",
                 "color": [1, 1, 0, 1],
                 "w": 0.035,  # Small box from LLM-TAMP
                 "l": 0.035,
@@ -170,6 +170,26 @@ class InnerMonologueEnv:
         if not self._initialized:
             raise RuntimeError("Environment not initialized. Call reset() first.")
         return self.env.get_observation()
+    
+    def get_camera_image(self, width=None, height=None, fov=None, near=None, far=None):
+        """
+        Capture an image from the camera.
+        
+        Args:
+            width: image width in pixels (optional)
+            height: image height in pixels (optional)
+            fov: vertical field of view in degrees (optional)
+            near: near clipping plane distance (optional)
+            far: far clipping plane distance (optional)
+        
+        Returns:
+            dict: containing 'rgb', 'depth', 'segmentation', etc.
+                  The 'rgb' key contains a numpy array of shape (height, width, 3)
+        """
+        if not self._initialized:
+            raise RuntimeError("Environment not initialized. Call reset() first.")
+        # Access camera through the robot object
+        return self.env.robot.get_camera_image(width, height, fov, near, far)
     
     def check_goal(self) -> tuple:
         """Check if goal is achieved."""

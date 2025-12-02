@@ -164,14 +164,14 @@ class PackCompactEnv(PybulletEnv):
 
     def get_symbolic_plan(self):
         return [
-            "pick(['red_box'], {})",
-            "place(['red_box'], {'x': ?, 'y': ?, 'theta': ?})",
-            "pick(['blue_box'], {})",
-            "place(['blue_box'], {'x': ?, 'y': ?, 'theta': ?})",
-            "pick(['cyan_box'], {})",
-            "place(['cyan_box'], {'x': ?, 'y': ?, 'theta': ?})",
-            "pick(['yellow_box'], {})",
-            "place(['yellow_box'], {'x': ?, 'y': ?, 'theta': ?})",
+            "pick(['red box'], {})",
+            "place(['red box'], {'x': ?, 'y': ?, 'theta': ?})",
+            "pick(['blue box'], {})",
+            "place(['blue box'], {'x': ?, 'y': ?, 'theta': ?})",
+            "pick(['cyan box'], {})",
+            "place(['cyan box'], {'x': ?, 'y': ?, 'theta': ?})",
+            "pick(['yellow box'], {})",
+            "place(['yellow box'], {'x': ?, 'y': ?, 'theta': ?})",
         ]
 
     def check_in_basket(self, obj_name, tol=0.015):
