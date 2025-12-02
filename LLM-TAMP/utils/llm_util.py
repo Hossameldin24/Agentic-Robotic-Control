@@ -8,8 +8,8 @@ from utils.io_util import load_json
 from openai import OpenAI
 
 
-openai_keys_folder = Path(__file__).resolve().parent.parent / "openai_keys"
-OPENAI_KEYS = load_json(openai_keys_folder / "openai_key.json")
+# openai_keys_folder = Path(__file__).resolve().parent.parent / "openai_keys"
+# OPENAI_KEYS = load_json(openai_keys_folder / "openai_key.json")
 
 logger = logging.getLogger(__name__)
 

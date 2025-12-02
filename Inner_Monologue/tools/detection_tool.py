@@ -227,7 +227,7 @@ def main():
     
     # Test detection
     print("\n3. Detecting objects...")
-    text_prompt = "remote control"
+    text_prompt = "remote controller"
     print(f"   Text prompt: '{text_prompt}'")
     
     bboxes, scores, detected_objects = detector.detect_objects(image, text_prompt)
