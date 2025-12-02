@@ -2,6 +2,11 @@
 import logging
 from typing import Dict, Any, Tuple
 from .base_tool import BaseTool
+import torch
+import numpy as np
+from scipy.spatial.transform import Rotation
+
+from .recognize_objects import RecognizeObjectsTool
 
 logger = logging.getLogger(__name__)
 
@@ -14,21 +19,24 @@ class DetectTool(BaseTool):
     the 2D bounding box center to 3D world coordinates using depth info.
     """
     
-    def __init__(self, environment):
+    def __init__(self, environment, fov=60):
         """Initialize detect tool with environment."""
         self.environment = environment
         self.name = "detect"
         self.description = "Detect object and return its 3D center coordinates"
+
+        self.recognize_tool = RecognizeObjectsTool(environment=environment)
+        self.fov = fov
+        
+        # Camera parameters (default values from robot)
+        self.camera_width = 640
+        self.camera_height = 480
+        self.camera_near = 0.02
+        self.camera_far = 5.0
         
         # TODO: Initialize MDETR model here
         # self.mdetr_model = load_mdetr_model()
         # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # Camera intrinsics - TODO: Get from actual camera setup
-        # self.fx = 525.0  # focal length x
-        # self.fy = 525.0  # focal length y
-        # self.cx = 320.0  # principal point x
-        # self.cy = 240.0  # principal point y
     
     def get_schema(self) -> Dict[str, Any]:
         """Get the tool schema for LLM function calling."""
@@ -59,28 +67,15 @@ class DetectTool(BaseTool):
         Returns:
             Tuple of (rgb_image, depth_map)
         """
-        # TODO: Get camera image and depth from PyBullet
-        # width, height = 640, 480
-        # view_matrix = p.computeViewMatrix(
-        #     cameraEyePosition=[0.5, 0, 0.5],
-        #     cameraTargetPosition=[0.5, 0, 0],
-        #     cameraUpVector=[0, 0, 1]
-        # )
-        # proj_matrix = p.computeProjectionMatrixFOV(
-        #     fov=60, aspect=width/height, nearVal=0.1, farVal=100
-        # )
-        # _, _, rgb, depth, seg = p.getCameraImage(width, height, view_matrix, proj_matrix)
-        # return rgb[:, :, :3], depth
-        pass
+        return self.recognize_tool._get_camera_image(fov=self.fov), self.recognize_tool._get_camera_depth(fov=self.fov)
     
-    def _run_mdetr_detection(self, image, object_name: str) -> Dict[str, Any]:
+    def _run_mdetr_detection(self, object_name: str) -> Dict[str, Any]:
         """
         Run MDETR model to detect specific object.
         
         TODO: Implement MDETR inference for specific object
         
         Args:
-            image: RGB image as numpy array
             object_name: Name of object to detect
             
         Returns:
@@ -112,35 +107,73 @@ class DetectTool(BaseTool):
         #             'score': best_score
         #         }
         # return best_detection
-        pass
+
+        results = self.recognize_tool.execute(object_name, fov=self.fov)
+        detections = [{
+            'bbox': det['bbox'],
+            'center_2d': ((det['bbox'][0] + det['bbox'][2]) / 2, (det['bbox'][1] + det['bbox'][3]) / 2),
+            'score': det['confidence']
+        } for det in results.get('detections', [])]
+
+        return detections
     
-    def _convert_2d_to_3d(self, center_2d: Tuple[float, float], depth_map) -> Tuple[float, float, float]:
+    def _convert_2d_to_3d(self, center_2d: Tuple[float, float], depth_map, fov=None) -> Tuple[float, float, float]:
         """
         Convert 2D pixel coordinates to 3D world coordinates using depth.
         
-        TODO: Implement 2D to 3D projection
-        
         Args:
             center_2d: (u, v) pixel coordinates
-            depth_map: Depth image from camera
+            depth_map: Depth buffer from PyBullet camera (needs conversion to real depth)
+            fov: Field of view in degrees (uses self.fov if None)
             
         Returns:
             (x, y, z) 3D coordinates in world frame
         """
-        # TODO: Convert 2D to 3D using camera intrinsics and depth
-        # u, v = center_2d
-        # z = depth_map[int(v), int(u)]  # depth at pixel
-        # 
-        # # Back-project to 3D camera frame
-        # x_cam = (u - self.cx) * z / self.fx
-        # y_cam = (v - self.cy) * z / self.fy
-        # z_cam = z
-        # 
-        # # Transform to world frame (depends on camera pose)
-        # # world_point = camera_to_world_transform @ [x_cam, y_cam, z_cam, 1]
-        # 
-        # return (x_world, y_world, z_world)
-        pass
+        u, v = center_2d
+        fov = fov or self.fov
+        
+        # Get depth buffer value at pixel
+        depth_buffer = depth_map[int(v), int(u)]
+        
+        # Convert depth buffer to real depth using near/far planes
+        # Formula from PyBullet: depth = far * near / (far - (far - near) * depth_buffer)
+        z_cam = self.camera_far * self.camera_near / (
+            self.camera_far - (self.camera_far - self.camera_near) * depth_buffer
+        )
+        
+        # Calculate focal length from FOV
+        # focal_length = height / (2 * tan(fov/2))
+        fov_rad = np.radians(fov)
+        focal_length = self.camera_height / (2.0 * np.tan(fov_rad / 2.0))
+        
+        # Calculate camera intrinsic matrix parameters
+        fx = fy = focal_length
+        cx = (self.camera_width - 1) / 2.0
+        cy = (self.camera_height - 1) / 2.0
+        
+        # Back-project to 3D camera frame using pinhole camera model
+        x_cam = (u - cx) * z_cam / fx
+        y_cam = (v - cy) * z_cam / fy
+        
+        # Get camera pose in world frame
+        camera_position, camera_orientation = self.environment.env.robot.get_camera_pose()
+        
+        # Convert quaternion to rotation matrix
+        rotation = Rotation.from_quat(camera_orientation)
+        camera_rot_matrix = rotation.as_matrix()
+        
+        # Create homogeneous transformation matrix from camera to world
+        camera_to_world = np.eye(4)
+        camera_to_world[:3, :3] = camera_rot_matrix
+        camera_to_world[:3, 3] = camera_position
+        
+        # Transform point from camera frame to world frame
+        point_camera = np.array([x_cam, y_cam, z_cam, 1.0])
+        point_world = camera_to_world @ point_camera
+        
+        x_world, y_world, z_world = point_world[:3]
+        
+        return (float(x_world), float(y_world), float(z_world))
     
     def execute(self, object_name: str) -> Dict[str, Any]:
         """
@@ -185,31 +218,28 @@ class DetectTool(BaseTool):
                     "object_name": object_name
                 }
             
-            # Check if object exists in environment
-            if object_name not in self.environment.env.objects:
-                available_objects = list(self.environment.env.objects.keys())
+            
+            image, depth = self._get_camera_image_and_depth()
+            detections = self._run_mdetr_detection(object_name)
+            if len(detections) == 0:
                 return {
                     "success": False,
-                    "feedback": f"Object '{object_name}' not found. Available: {available_objects}",
-                    "object_name": object_name,
-                    "available_objects": available_objects
+                    "feedback": f"Object '{object_name}' not detected in scene",
+                    "object_name": object_name
                 }
-            
-            # PLACEHOLDER: Get position from PyBullet (to be replaced by MDETR)
-            position = self.environment.env.get_position(object_name)
-            
+            detection = detections[0]  # Take first detection
+            x, y, z = self._convert_2d_to_3d(detection['center_2d'], depth)
             result = {
                 "success": True,
                 "object_name": object_name,
-                "center": {
-                    "x": float(position[0]),
-                    "y": float(position[1]),
-                    "z": float(position[2])
+                "position": {
+                    "x": x,
+                    "y": y,
+                    "z": z
                 },
-                "feedback": f"Detected {object_name} at ({position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f})"
+                "feedback": f"Detected '{object_name}' at position ({x:.3f}, {y:.3f}, {z:.3f})"
             }
-            
-            print(f"   ✅ Position: ({position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f})")
+            print(f"   ✅ Position: ({x:.3f}, {y:.3f}, {z:.3f})")
             return result
             
         except Exception as e:

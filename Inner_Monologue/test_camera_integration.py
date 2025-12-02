@@ -10,6 +10,9 @@ from Inner_Monologue.environment.pybullet_env import InnerMonologueEnv
 from Inner_Monologue.tools.recognize_objects import RecognizeObjectsTool
 
 
+import matplotlib.pyplot as plt
+
+
 def test_camera_integration():
     """Test that camera image capture works with DetectionTool."""
     print("=" * 80)
@@ -30,6 +33,21 @@ def test_camera_integration():
         # Higher values = more zoom out (try 100-120 for wider view)
         fov = 130  # Wider field of view to see more of the scene
         image = recognize_tool._get_camera_image(fov=fov)
+        depth = recognize_tool._get_camera_depth(fov=fov)
+
+        plt.figure(figsize=(12, 6))
+        plt.subplot(1, 2, 1)
+        plt.title("RGB Image")
+        plt.imshow(image)
+        plt.axis('off')
+
+        plt.subplot(1, 2, 2)
+        plt.title("Depth Image")
+        plt.imshow(depth, cmap='gray')
+        plt.axis('off')
+
+        plt.show()
+
         print(f"   ✅ Camera image captured successfully with FOV={fov}°!")
         print(f"   Image size: {image.size}")
         print(f"   Image mode: {image.mode}")
@@ -48,6 +66,9 @@ def test_camera_integration():
         print(f"   Number of detections: {len(result['detections'])}")
         for i, det in enumerate(result['detections'][:]):  # Show all
             print(f"      {i+1}. {det['name']} (confidence: {det['confidence']:.2f})")
+
+    print("EL KEYSS AHEE YA 7amo")
+    print(result.keys())
     
     print("\n6. Visualizing detections...")
     if 'detections' in result and len(result['detections']) > 0:

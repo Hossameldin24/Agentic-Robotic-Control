@@ -87,7 +87,43 @@ class RecognizeObjectsTool(BaseTool):
                 "Environment must implement either 'get_camera_image()' or 'render(mode=\"rgb_array\")' method"
             )
     
-    def execute(self, fov=None) -> Dict[str, Any]:
+    def _get_camera_depth(self, fov=None):
+        """
+        Capture Depth image from PyBullet camera.
+        
+        Args:
+            fov: Field of view in degrees. Higher values = more zoom out. 
+                 Default is typically 60-90 degrees. Try 100-120 for wider view.
+        
+        Returns: PIL Image object
+        """
+        if hasattr(self.environment, 'get_camera_image'):
+            # If environment has a method to get camera image
+            camera_data = self.environment.get_camera_image(fov=fov)
+            
+            # Handle dict return (LLM-TAMP format)
+            if isinstance(camera_data, dict) and 'depth' in camera_data:
+                img_array = camera_data['depth']
+            else:
+                raise NotImplementedError("Environment's get_camera_image() does not return depth data")
+            
+            # # Convert numpy array to PIL Image
+            # if isinstance(img_array, np.ndarray):
+            #     return Image.fromarray(img_array.astype('uint8'), 'RGB')
+            return img_array
+            
+        # elif hasattr(self.environment, 'render'):
+        #     # Alternative: use render method
+        #     img_array = self.environment.render(mode='rgb_array')
+        #     if isinstance(img_array, np.ndarray):
+        #         return Image.fromarray(img_array.astype('uint8'), 'RGB')
+        #     return img_array
+        else:
+            raise NotImplementedError(
+                "Environment must implement either 'get_camera_image()' or 'render(mode=\"rgb_array\")' method"
+            )
+    
+    def execute(self, object_name, fov=None) -> Dict[str, Any]:
         """
         Execute object recognition using MDETR via DetectionTool.
         
@@ -105,7 +141,7 @@ class RecognizeObjectsTool(BaseTool):
             logger.info(f"Captured image of size: {image.size}")
             
             # Step 2: Run MDETR detection with broad prompt
-            prompt = "red box, blue box, green box, yellow box, brown basket and a robot on a light brown table"
+            prompt = f"find all instances of {object_name} in the scene"
             bboxes, scores, detected_objects = self.detection_tool.detect_objects(image, prompt)
             
             # Step 3: Extract unique object names (filter out "unknown")
