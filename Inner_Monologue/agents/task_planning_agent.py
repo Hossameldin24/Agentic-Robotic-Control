@@ -58,6 +58,9 @@ AVAILABLE TOOLS:
    - Returns 3D center coordinates (x, y, z) of specified object in meters
    - Use before picking to know where the object is
    - Use for basket to know destination center
+   - CRITICAL: Be very descriptive with object_name you pass to the detection (e.g., "a small red box", "a rectangular brown basket")
+   - CRITICAL: When detecting the basket, ALWAYS use The following name for "A brown rectangular basket on a light brown table"
+   - CRITICAL: When detecting any box, ALWAYS use The following name for "A small {color} box" where {color} is the color of the box (red, blue, green, yellow)
 
 3. pick(object_name: str, x: float, y: float, z: float)
    - Moves gripper to (x,y,z) and picks up the object
@@ -87,8 +90,8 @@ CRITICAL NOTE:
 WORKFLOW FOR EACH BOX:
 
 1. detect(box_name) -> get box 3D position
-2. pick(box_name, x, y, z) -> pick at detected coordinates
-3. detect("basket") -> get basket center position
+2. detect("A rectangular brown basket") -> get basket center position
+3. pick(box_name, x, y, z) -> pick at detected coordinates
 4. place(x, y, theta) -> predict placement inside basket
    - Use offsets from basket center to avoid collisions
    - Leave space for remaining boxes

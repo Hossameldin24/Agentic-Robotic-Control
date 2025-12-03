@@ -123,7 +123,7 @@ class RecognizeObjectsTool(BaseTool):
                 "Environment must implement either 'get_camera_image()' or 'render(mode=\"rgb_array\")' method"
             )
     
-    def execute(self, object_name, fov=None) -> Dict[str, Any]:
+    def execute(self,fov=None) -> Dict[str, Any]:
         """
         Execute object recognition using MDETR via DetectionTool.
         
@@ -141,7 +141,7 @@ class RecognizeObjectsTool(BaseTool):
             logger.info(f"Captured image of size: {image.size}")
             
             # Step 2: Run MDETR detection with broad prompt
-            prompt = f"find all instances of {object_name} in the scene"
+            prompt = f"red box, blue box, green box, yellow box, brown basket and a robot on a light brown table"
             bboxes, scores, detected_objects = self.detection_tool.detect_objects(image, prompt)
             
             # Step 3: Extract unique object names (filter out "unknown")

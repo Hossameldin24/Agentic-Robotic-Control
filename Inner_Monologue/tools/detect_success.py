@@ -3,6 +3,9 @@ import logging
 import math
 from typing import Dict, Any, Tuple
 from .base_tool import BaseTool
+import numpy as np
+from scipy.spatial.transform import Rotation
+from .recognize_objects import RecognizeObjectsTool
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +19,19 @@ class DetectSuccessTool(BaseTool):
     success/failure based on threshold.
     """
     
-    def __init__(self, environment):
+    def __init__(self, environment, fov = 60):
         """Initialize detect success tool with environment."""
         self.environment = environment
         self.wrapper = None  # Set externally
         self.name = "detect_success"
         self.description = "Validate if object placement was successful"
+        self.recognize_tool = RecognizeObjectsTool(environment=environment) 
         
+        self.fov = fov
+        self.camera_width = 640
+        self.camera_height = 480
+        self.camera_near = 0.02
+        self.camera_far = 5.0
         # Success threshold in meters
         self.distance_threshold = 0.04  # 4cm tolerance
         
@@ -79,16 +88,24 @@ class DetectSuccessTool(BaseTool):
         TODO: Implement camera capture from PyBullet environment
         """
         # TODO: Same as in detect_tool.py
-        pass
+        return self.recognize_tool._get_camera_image(fov=self.fov), self.recognize_tool._get_depth_map(fov=self.fov)
     
-    def _run_mdetr_detection(self, image, object_name: str) -> Dict[str, Any]:
+    def _run_mdetr_detection(self,object_name: str) -> Dict[str, Any]:
         """
         Run MDETR model to detect specific object.
         
         TODO: Implement MDETR inference
         """
         # TODO: Same as in detect_tool.py
-        pass
+        results = self.recognize_tool.execute(object_name=object_name, fov=self.fov)
+        if results['detections']:
+            detections = [{
+                'bbox': det['bbox'],
+                'center_2d': ((det['bbox'][0] + det['bbox'][2]) / 2, (det['bbox'][1] + det['bbox'][3]) / 2),
+                'score': det['score']
+            } for det in results['detections']]
+        return detections
+        
     
     def _convert_2d_to_3d(self, center_2d: Tuple[float, float], depth_map) -> Tuple[float, float, float]:
         """
@@ -97,7 +114,51 @@ class DetectSuccessTool(BaseTool):
         TODO: Implement 2D to 3D projection
         """
         # TODO: Same as in detect_tool.py
-        pass
+        u, v = center_2d
+        fov = fov or self.fov
+        
+        # Get depth buffer value at pixel
+        depth_buffer = depth_map[int(v), int(u)]
+        
+        # Convert depth buffer to real depth using near/far planes
+        # Formula from PyBullet: depth = far * near / (far - (far - near) * depth_buffer)
+        z_cam = self.camera_far * self.camera_near / (
+            self.camera_far - (self.camera_far - self.camera_near) * depth_buffer
+        )
+        
+        # Calculate focal length from FOV
+        # focal_length = height / (2 * tan(fov/2))
+        fov_rad = np.radians(fov)
+        focal_length = self.camera_height / (2.0 * np.tan(fov_rad / 2.0))
+        
+        # Calculate camera intrinsic matrix parameters
+        fx = fy = focal_length
+        cx = (self.camera_width - 1) / 2.0
+        cy = (self.camera_height - 1) / 2.0
+        
+        # Back-project to 3D camera frame using pinhole camera model
+        x_cam = (u - cx) * z_cam / fx
+        y_cam = (v - cy) * z_cam / fy
+        
+        # Get camera pose in world frame
+        camera_position, camera_orientation = self.environment.env.robot.get_camera_pose()
+        
+        # Convert quaternion to rotation matrix
+        rotation = Rotation.from_quat(camera_orientation)
+        camera_rot_matrix = rotation.as_matrix()
+        
+        # Create homogeneous transformation matrix from camera to world
+        camera_to_world = np.eye(4)
+        camera_to_world[:3, :3] = camera_rot_matrix
+        camera_to_world[:3, 3] = camera_position
+        
+        # Transform point from camera frame to world frame
+        point_camera = np.array([x_cam, y_cam, z_cam, 1.0])
+        point_world = camera_to_world @ point_camera
+        
+        x_world, y_world, z_world = point_world[:3]
+        
+        return (float(x_world), float(y_world), float(z_world))
     
     def _calculate_placement_loss(
         self, 
