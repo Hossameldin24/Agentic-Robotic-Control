@@ -5,11 +5,13 @@ from typing import Dict, Any, Tuple
 from .detection_tool import DetectionTool
 from .base_tool import BaseTool
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 from .recognize_objects import RecognizeObjectsTool
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import pybullet as p
+
+from scipy.spatial.transform import Rotation as R
 
 logger = logging.getLogger(__name__)
 
@@ -36,26 +38,9 @@ class DetectTool(BaseTool):
             iou_threshold=0.5
         )
         
-        # Camera parameters - get from environment if available, otherwise use defaults
-        self._init_camera_parameters()
-        
         # TODO: Initialize MDETR model here
         # self.mdetr_model = load_mdetr_model()
         # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    def _init_camera_parameters(self):
-        """Initialize camera parameters from environment or use defaults."""
-        # Try to get camera parameters from environment
-        if hasattr(self.environment, 'env') and hasattr(self.environment.env, 'robot'):
-            robot = self.environment.env.robot
-            # Check if robot has camera configuration
-            if hasattr(robot, 'camera_width'):
-                self.camera_width = robot.camera_width
-                self.camera_height = robot.camera_height
-                self.camera_near = robot.camera_near
-                self.camera_far = robot.camera_far
-                print(f"   📷 Using camera params from environment: {self.camera_width}x{self.camera_height}, near={self.camera_near}, far={self.camera_far}")
-                return
         
         # Fallback to default values if environment doesn't provide them
         self.camera_width = 640
@@ -100,16 +85,22 @@ class DetectTool(BaseTool):
             }
         }
     
-    def _get_camera_image_and_depth(self) -> Tuple[Any, Any]:
+    def _get_camera_image_and_depth(self) -> Tuple[Any, Any, Dict[str, Any]]:
         """
-        Capture RGB image and depth map from PyBullet camera.
-        
-        TODO: Implement camera capture from PyBullet environment
+        Capture RGB image and depth map from PyBullet camera with explicit parameters.
         
         Returns:
-            Tuple of (rgb_image, depth_map)
+            Tuple of (rgb_image, depth_map, camera_params) where camera_params contains:
+                - width: actual image width used
+                - height: actual image height used
+                - fov: actual field of view used
+                - near: actual near clipping plane
+                - far: actual far clipping plane
         """
-        return self.recognize_tool._get_camera_image(fov=self.fov), self.recognize_tool._get_camera_depth(fov=self.fov)
+        
+        # Capture image directly from robot with explicit parameters
+        camera_data = self.environment.env.robot.get_camera_image(fov = self.fov)
+        return camera_data
     
     def _run_mdetr_detection(self, image, object_name: str) -> Dict[str, Any]:
         """
@@ -265,169 +256,121 @@ class DetectTool(BaseTool):
             print(f"   ⚠️  Could not plot detection visualization: {str(e)}")
             logger.warning(f"Plotting failed: {str(e)}")
     
-    def _convert_2d_to_3d(self, center_2d: Tuple[float, float], depth_map, fov=None) -> Tuple[float, float, float]:
+    def _convert_2d_to_3d(self, center_2d: Tuple[float, float], camera_data) -> Tuple[float, float, float]:
+        u, v = center_2d
+        
+        depth_map = camera_data['depth']
+        camera_orientation = camera_data['camera_orientation']
+        camera_position = camera_data['camera_position']
+        
+        img_width = camera_data['img_width']
+        img_height = camera_data['img_height']
+        near = camera_data['near']
+        far = camera_data['far']
+        
+        # Get depth at pixel (u, v)
+        depth_buffer = depth_map[int(v), int(u)]
+        
+        # Convert normalized depth buffer to real depth (linearize)
+        real_depth = near * far / (far - (far - near) * depth_buffer)
+        
+        # Compute intrinsic parameters from FOV
+        fov_rad = np.deg2rad(self.fov)
+        cx = img_width / 2
+        cy = img_height / 2
+        fx = (img_width / 2) / np.tan(fov_rad / 2)
+        fy = (img_height / 2) / np.tan(fov_rad / 2)
+        
+        # Flip y-coordinate since pixel origin is top-left (y increases downward)
+        # but camera coordinates have y increasing upward
+        v_flipped = img_height - v
+        
+        # Convert pixel coordinates to camera coordinates
+        x_cam = (u - cx) * real_depth / fx
+        y_cam = (v_flipped - cy) * real_depth / fy
+        z_cam = real_depth
+        
+        # Camera coordinates (OpenGL convention: +Z forward, Y up, X right)
+        camera_coords = np.array([x_cam, y_cam, z_cam])
+        
+        # Transform to world coordinates
+        rot = R.from_quat(camera_orientation)
+        R_mat = rot.as_matrix()
+        
+        # Correct transformation: rotate camera coords then translate
+        world_coords = R_mat @ camera_coords + camera_position
+        
+        return world_coords[0], world_coords[1], world_coords[2]
+    
+    def _add_visual_marker(self, position: Tuple[float, float, float], object_name: str):
         """
-        Convert 2D pixel coordinates to 3D world coordinates using depth.
+        Add a visual marker in the PyBullet environment at the detected 3D position.
         
         Args:
-            center_2d: (u, v) pixel coordinates
-            depth_map: Depth buffer from PyBullet camera (needs conversion to real depth)
-            fov: Field of view in degrees (uses self.fov if None)
-            
-        Returns:
-            (x, y, z) 3D coordinates in world frame
+            position: (x, y, z) 3D coordinates in world frame
+            object_name: Name of the detected object (for color coding)
         """
-        u, v = center_2d
-        fov = fov or self.fov
-        
-        # Get current camera parameters (may be updated from environment)
-        camera_width, camera_height, camera_near, camera_far = self._get_camera_parameters()
-        
-        print(f"   🔍 Debug - Camera params: {camera_width}x{camera_height}, FOV={fov}°, near={camera_near}, far={camera_far}")
-        print(f"   🔍 Debug - Pixel coordinates: u={u:.1f}, v={v:.1f}")
-        
-        # Clamp pixel coordinates to image bounds
-        u = max(0, min(camera_width - 1, u))
-        v = max(0, min(camera_height - 1, v))
-        
-        # Get depth buffer value at pixel
-        depth_buffer = depth_map[int(v), int(u)]
-        print(f"   🔍 Debug - Raw depth buffer value: {depth_buffer:.6f}")
-        
-        # Check for invalid depth values
-        if depth_buffer <= 0.0 or depth_buffer >= 1.0:
-            print(f"   ⚠️  Warning: Invalid depth buffer value: {depth_buffer}")
-            depth_buffer = max(0.01, min(0.99, depth_buffer))
-        
-        # Convert depth buffer to real depth using near/far planes
-        # Formula from PyBullet: depth = far * near / (far - (far - near) * depth_buffer)
-        denominator = camera_far - (camera_far - camera_near) * depth_buffer
-        if abs(denominator) < 1e-6:
-            print(f"   ⚠️  Warning: Near-zero denominator in depth conversion: {denominator}")
-            z_cam = camera_far  # Use far plane as fallback
-        else:
-            z_cam = camera_far * camera_near / denominator
-        
-        print(f"   🔍 Debug - Calculated camera Z depth: {z_cam:.6f}m")
-        
-        # Sanity check on depth
-        if z_cam < camera_near or z_cam > camera_far:
-            print(f"   ⚠️  Warning: Depth {z_cam:.3f} outside valid range [{camera_near}, {camera_far}]")
-            z_cam = max(camera_near, min(camera_far, z_cam))
-        
-        # Calculate focal length from FOV
-        # focal_length = height / (2 * tan(fov/2))
-        fov_rad = np.radians(fov)
-        focal_length = camera_height / (2.0 * np.tan(fov_rad / 2.0))
-        print(f"   🔍 Debug - Calculated focal length: {focal_length:.1f} pixels")
-        
-        # Calculate camera intrinsic matrix parameters
-        fx = fy = focal_length
-        cx = (camera_width - 1) / 2.0  # Principal point x
-        cy = (camera_height - 1) / 2.0  # Principal point y
-        
-        print(f"   🔍 Debug - Camera intrinsics: fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}")
-        
-        # Back-project to 3D camera frame using pinhole camera model
-        # Note: PyBullet camera coordinate system analysis from rotation matrix:
-        # Camera rotation matrix shows: X=-1, Y=1, Z=-1 on diagonal
-        # This means: +X points left, +Y points down, +Z points backward (away from scene)
-        # We need to adjust for this coordinate system
-        x_cam = (u - cx) * z_cam / fx
-        y_cam = (v - cy) * z_cam / fy
-        
-        print(f"   🔍 Debug - Camera frame coordinates (raw): x_cam={x_cam:.6f}, y_cam={y_cam:.6f}, z_cam={z_cam:.6f}")
-        
-        # Adjust for PyBullet camera coordinate system
-        # Based on rotation matrix, we need to flip X and Z to match world coordinates
-        x_cam_corrected = -x_cam  # Flip X (camera X axis is inverted)
-        y_cam_corrected = -y_cam  # Flip Y (based on results, Y needs sign flip)  
-        z_cam_corrected = z_cam   # Keep Z positive (depth into scene)
-        
-        print(f"   🔍 Debug - Camera frame coordinates (corrected): x_cam={x_cam_corrected:.6f}, y_cam={y_cam_corrected:.6f}, z_cam={z_cam_corrected:.6f}")
-        
-        # Get camera pose in world frame
-        camera_position, camera_orientation = self.environment.env.robot.get_camera_pose()
-        print(f"   🔍 Debug - Camera position: {camera_position}")
-        print(f"   🔍 Debug - Camera orientation (quat): {camera_orientation}")
-        
-        # Convert quaternion to rotation matrix
-        rotation = Rotation.from_quat(camera_orientation)
-        camera_rot_matrix = rotation.as_matrix()
-        
-        print(f"   🔍 Debug - Camera rotation matrix:")
-        print(f"   {camera_rot_matrix[0]}")
-        print(f"   {camera_rot_matrix[1]}")
-        print(f"   {camera_rot_matrix[2]}")
-        
-        # The Z issue is likely because we're using camera-to-world transform incorrectly
-        # Let's try a simpler approach: just add the camera frame offset to camera position
-        # Since the camera is pointing down with specific orientation
-        
-        # Simple transformation: camera position + rotated camera frame coordinates
-        world_offset = camera_rot_matrix @ np.array([x_cam_corrected, y_cam_corrected, z_cam_corrected])
-        x_world_simple = camera_position[0] + world_offset[0]
-        y_world_simple = camera_position[1] + world_offset[1]  
-        z_world_simple = camera_position[2] + world_offset[2]
-        
-        print(f"   🔍 Debug - Simple world coordinates: x={x_world_simple:.6f}, y={y_world_simple:.6f}, z={z_world_simple:.6f}")
-        
-        # Alternative: Project point down to table height (assume Z=0.04 is table surface)
-        # The object should be near the table surface
-        table_height = 0.040  # Your true Z coordinate
-        x_world_projected = camera_position[0] + (world_offset[0] * table_height / camera_position[2])
-        y_world_projected = camera_position[1] + (world_offset[1] * table_height / camera_position[2])
-        z_world_projected = table_height
-        
-        print(f"   🔍 Debug - Table-projected coordinates: x={x_world_projected:.6f}, y={y_world_projected:.6f}, z={z_world_projected:.6f}")
-        
-        # Create homogeneous transformation matrix from camera to world
-        camera_to_world = np.eye(4)
-        camera_to_world[:3, :3] = camera_rot_matrix
-        camera_to_world[:3, 3] = camera_position
-        
-        # Transform point from camera frame to world frame using corrected coordinates
-        point_camera = np.array([x_cam_corrected, y_cam_corrected, z_cam_corrected, 1.0])
-        point_world = camera_to_world @ point_camera
-        
-        x_world, y_world, z_world = point_world[:3]
-        
-        print(f"   🔍 Debug - Homogeneous transform result: x={x_world:.6f}, y={y_world:.6f}, z={z_world:.6f}")
-        
-        # Try alternative Y coordinate (flip Y axis) to see which is correct
-        point_camera_alt = np.array([x_cam_corrected, -y_cam_corrected, z_cam_corrected, 1.0])
-        point_world_alt = camera_to_world @ point_camera_alt
-        x_world_alt, y_world_alt, z_world_alt = point_world_alt[:3]
-        
-        print(f"   🔍 Debug - Alternative world coords (Y-flipped): x={x_world_alt:.6f}, y={y_world_alt:.6f}, z={z_world_alt:.6f}")
-        
-        # Test multiple coordinate system combinations to find the best match
-        combinations = [
-            ("Original homogeneous", x_world, y_world, z_world),
-            ("Y-flipped homogeneous", x_world_alt, y_world_alt, z_world_alt),
-            ("Simple transform", x_world_simple, y_world_simple, z_world_simple),
-            ("Table projected", x_world_projected, y_world_projected, z_world_projected),
-            ("Manual correction", x_world_simple, -y_world_simple, table_height),
-        ]
-        
-        print(f"   🔧 Testing coordinate system combinations:")
-        best_error = float('inf')
-        best_coords = None
-        for name, x_test, y_test, z_test in combinations:
-            error_x = abs(x_test - 0.390)
-            error_y = abs(y_test - 0.470) 
-            error_z = abs(z_test - 0.040)
-            total_error = error_x + error_y + error_z
-            print(f"   {name:20}: ({x_test:.3f}, {y_test:.3f}, {z_test:.3f}) - Error: {total_error:.3f}")
+        try:
+            x, y, z = position
             
-            if total_error < best_error:
-                best_error = total_error
-                best_coords = (x_test, y_test, z_test)
-        
-        print(f"   🎯 Best method: {best_coords} with error: {best_error:.3f}")
-        
-        # Return the best coordinates found
-        return (float(best_coords[0]), float(best_coords[1]), float(best_coords[2]))
+            # Color coding based on object name
+            color_map = {
+                'red': [1, 0, 0],
+                'blue': [0, 0, 1],
+                'green': [0, 1, 0],
+                'yellow': [1, 1, 0],
+                'basket': [0.6, 0.4, 0.2],
+                'brown': [0.6, 0.4, 0.2],
+            }
+            
+            # Find matching color or use default cyan
+            marker_color = [0, 1, 1]  # Default cyan
+            for key, color in color_map.items():
+                if key in object_name.lower():
+                    marker_color = color
+                    break
+            
+            # Create a visual marker sphere at the detected position
+            marker_size = 0.02  # 2cm radius sphere
+            visual_shape_id = p.createVisualShape(
+                shapeType=p.GEOM_SPHERE,
+                radius=marker_size,
+                rgbaColor=marker_color + [0.8]  # Add alpha
+            )
+            
+            # Create the marker body
+            marker_body_id = p.createMultiBody(
+                baseMass=0,  # Static marker
+                baseVisualShapeIndex=visual_shape_id,
+                basePosition=[x, y, z]
+            )
+            
+            # Also add a vertical line from marker to table for better visualization
+            line_start = [x, y, 0.0]  # Table level
+            line_end = [x, y, z]
+            p.addUserDebugLine(
+                lineFromXYZ=line_start,
+                lineToXYZ=line_end,
+                lineColorRGB=marker_color,
+                lineWidth=2,
+                lifeTime=30  # Marker lasts 30 seconds
+            )
+            
+            # Add text label above the marker
+            text_position = [x, y, z + 0.05]  # 5cm above the marker
+            p.addUserDebugText(
+                text=f"{object_name}\n({x:.2f}, {y:.2f}, {z:.2f})",
+                textPosition=text_position,
+                textColorRGB=marker_color,
+                textSize=1.0,
+                lifeTime=30  # Text lasts 30 seconds
+            )
+            
+            print(f"   📍 Added visual marker at ({x:.3f}, {y:.3f}, {z:.3f}) with color {marker_color}")
+            
+        except Exception as e:
+            print(f"   ⚠️  Could not add visual marker: {str(e)}")
+            logger.warning(f"Visual marker creation failed: {str(e)}")
     
     def execute(self, object_name: str) -> Dict[str, Any]:
         """
@@ -473,9 +416,10 @@ class DetectTool(BaseTool):
                 }
             
             
-            image, depth = self._get_camera_image_and_depth()
+            camera_data = self._get_camera_image_and_depth()
             print(f"   ✅ Captured image and depth for detection.")
-            detection_result = self._run_mdetr_detection(object_name = object_name, image=image)
+            print(f"   📷 Camera params: {camera_data['img_width']}x{camera_data['img_height']}")
+            detection_result = self._run_mdetr_detection(object_name = object_name, image=camera_data['rgb'])
             
             # Check if detection was successful
             if not detection_result.get("success", False) or len(detection_result.get("detections", [])) == 0:
@@ -486,13 +430,18 @@ class DetectTool(BaseTool):
                 }
             
             # Get the first detection
-            detection = detection_result["detections"][0]
+            # Find the detection with the highest confidence
+            detection = max(detection_result["detections"], key=lambda d: d['confidence'])
             
             # Plot the detection results for visualization
-            self._plot_detection(image, detection_result["detections"], object_name)
+            self._plot_detection(camera_data['rgb'], detection_result["detections"], object_name)
             
-            x, y, z = self._convert_2d_to_3d(detection['center_2d'], depth)
+            x, y, z = self._convert_2d_to_3d(detection['center_2d'], camera_data)
             print(f"   ✅ Detected '{object_name}' at 3D position ({x:.3f}, {y:.3f}, {z:.3f})")
+            
+            # Add visual marker in the PyBullet environment
+            self._add_visual_marker((x, y, z), object_name)
+            
             result = {
                 "success": True,
                 "object_name": object_name,

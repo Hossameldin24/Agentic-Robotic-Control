@@ -3,6 +3,8 @@ import logging
 from typing import Dict, Any, List
 from PIL import Image
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 from .base_tool import BaseTool
 from .detection_tool import DetectionTool
 
@@ -123,6 +125,66 @@ class RecognizeObjectsTool(BaseTool):
                 "Environment must implement either 'get_camera_image()' or 'render(mode=\"rgb_array\")' method"
             )
     
+    def _plot_recognized_objects(self, image, detections_list):
+        """
+        Plot the image with all detected objects, bounding boxes, and labels.
+        
+        Args:
+            image: PIL Image object
+            detections_list: List of detection dictionaries with 'bbox', 'name', 'confidence'
+        """
+        try:
+            fig, ax = plt.subplots(1, 1, figsize=(14, 10))
+            ax.imshow(image)
+            ax.set_title(f"Recognized Objects ({len(detections_list)} detections)")
+            
+            # Different colors for different objects
+            colors = ['red', 'blue', 'green', 'yellow', 'cyan', 'magenta', 'orange', 'purple']
+            
+            # Plot each detection
+            for i, detection in enumerate(detections_list):
+                bbox = detection['bbox']  # [x1, y1, x2, y2]
+                name = detection['name']
+                confidence = detection.get('confidence', 0.0)
+                
+                # Create rectangle patch for bounding box
+                x1, y1, x2, y2 = bbox
+                width = x2 - x1
+                height = y2 - y1
+                
+                # Assign color
+                color = colors[i % len(colors)]
+                
+                # Draw bounding box
+                rect = patches.Rectangle((x1, y1), width, height, 
+                                       linewidth=2, edgecolor=color, facecolor='none')
+                ax.add_patch(rect)
+                
+                # Calculate center point
+                center_x = (x1 + x2) / 2
+                center_y = (y1 + y2) / 2
+                
+                # Draw center point
+                ax.plot(center_x, center_y, 'o', color=color, markersize=6, 
+                       markeredgecolor='white', markeredgewidth=1.5)
+                
+                # Add label with object name and confidence
+                label_text = f"{name}\n{confidence:.2f}"
+                ax.text(x1, y1-5, label_text, color=color, fontsize=9, fontweight='bold',
+                       bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
+                
+                print(f"   📦 Detection {i+1}: {name} (conf: {confidence:.2f}) at bbox [{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]")
+            
+            ax.set_xlabel('X (pixels)')
+            ax.set_ylabel('Y (pixels)')
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.show()
+            
+        except Exception as e:
+            print(f"   ⚠️  Could not plot recognition visualization: {str(e)}")
+            logger.warning(f"Plotting failed: {str(e)}")
+    
     def execute(self,fov=None) -> Dict[str, Any]:
         """
         Execute object recognition using MDETR via DetectionTool.
@@ -167,6 +229,11 @@ class RecognizeObjectsTool(BaseTool):
             }
             
             print(f"   ✅ Found {len(object_list)} unique objects: {', '.join(object_list)}")
+            
+            # Plot all detected objects
+            if len(result["detections"]) > 0:
+                self._plot_recognized_objects(image, result["detections"])
+            
             return result
             
         except NotImplementedError as e:

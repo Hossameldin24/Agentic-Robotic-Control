@@ -3,6 +3,7 @@ import abc
 import logging
 import numpy as np
 from scipy.spatial.transform import Rotation
+from PIL import Image
 
 import pybullet as p
 from pybullet_planning import (
@@ -469,13 +470,18 @@ class PyBulletRobot:
         seg_array = np.array(seg_img, dtype=np.int32).reshape(height, width)
         
         return {
-            'rgb': rgb_array,
+            'rgb_np': rgb_array,
+            'rgb': Image.fromarray(rgb_array),
             'depth': depth_array,
             'segmentation': seg_array,
             'camera_position': camera_position,
             'camera_orientation': camera_orientation,
             'view_matrix': view_matrix,
-            'projection_matrix': projection_matrix
+            'projection_matrix': projection_matrix,
+            'img_width': img_width,
+            'img_height': img_height,
+            'near': near,
+            'far': far
         }
 
     def verify_ik(self, targeted_pos, targeted_ori, joint_conf):
