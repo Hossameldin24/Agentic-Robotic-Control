@@ -43,10 +43,10 @@ class DetectTool(BaseTool):
         # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Fallback to default values if environment doesn't provide them
-        self.camera_width = 640
-        self.camera_height = 480
-        self.camera_near = 0.02
-        self.camera_far = 5.0
+        self.camera_width = 1920
+        self.camera_height = 1080
+        self.camera_near = 0.01
+        self.camera_far = 10
         print(f"   📷 Using default camera params: {self.camera_width}x{self.camera_height}, near={self.camera_near}, far={self.camera_far}")
     
     def _get_camera_parameters(self) -> Tuple[int, int, float, float]:
@@ -99,7 +99,7 @@ class DetectTool(BaseTool):
         """
         
         # Capture image directly from robot with explicit parameters
-        camera_data = self.environment.env.robot.get_camera_image(fov = self.fov)
+        camera_data = self.environment.env.robot.get_camera_image()
         return camera_data
     
     def _run_mdetr_detection(self, image, object_name: str) -> Dict[str, Any]:
@@ -262,6 +262,8 @@ class DetectTool(BaseTool):
         depth_map = camera_data['depth']
         camera_orientation = camera_data['camera_orientation']
         camera_position = camera_data['camera_position']
+        view_matrix = camera_data['view_matrix']
+        projection_matrix = camera_data['projection_matrix']
         
         img_width = camera_data['img_width']
         img_height = camera_data['img_height']
@@ -272,33 +274,35 @@ class DetectTool(BaseTool):
         depth_buffer = depth_map[int(v), int(u)]
         
         # Convert normalized depth buffer to real depth (linearize)
-        real_depth = near * far / (far - (far - near) * depth_buffer)
+        real_depth = far * near / (far - (far - near) * depth_buffer)
         
-        # Compute intrinsic parameters from FOV
-        fov_rad = np.deg2rad(self.fov)
-        cx = img_width / 2
-        cy = img_height / 2
-        fx = (img_width / 2) / np.tan(fov_rad / 2)
-        fy = (img_height / 2) / np.tan(fov_rad / 2)
+        # Convert pixel coordinates to normalized device coordinates (NDC)
+        # Pixel space: (0, 0) is top-left, (width, height) is bottom-right
+        # NDC space: (-1, -1) is bottom-left, (1, 1) is top-right
+        x_ndc = (2.0 * u / img_width) - 1.0
+        y_ndc = 1.0 - (2.0 * v / img_height)  # Flip y-axis
         
-        # Flip y-coordinate since pixel origin is top-left (y increases downward)
-        # but camera coordinates have y increasing upward
-        v_flipped = img_height - v
+        # Reshape matrices for computation
+        proj_matrix = np.array(projection_matrix).reshape(4, 4).T
+        view_matrix_np = np.array(view_matrix).reshape(4, 4).T
         
-        # Convert pixel coordinates to camera coordinates
-        x_cam = (u - cx) * real_depth / fx
-        y_cam = (v_flipped - cy) * real_depth / fy
-        z_cam = real_depth
+        # Compute inverse projection matrix
+        inv_proj = np.linalg.inv(proj_matrix)
         
-        # Camera coordinates (OpenGL convention: +Z forward, Y up, X right)
-        camera_coords = np.array([x_cam, y_cam, z_cam])
+        # Compute inverse view matrix
+        inv_view = np.linalg.inv(view_matrix_np)
         
-        # Transform to world coordinates
-        rot = R.from_quat(camera_orientation)
-        R_mat = rot.as_matrix()
+        # Convert from NDC to clip space (add depth)
+        # Depth in clip space needs to be converted from [0, 1] to [-1, 1]
+        z_clip = 2.0 * depth_buffer - 1.0
+        clip_coords = np.array([x_ndc, y_ndc, z_clip, 1.0])
         
-        # Correct transformation: rotate camera coords then translate
-        world_coords = R_mat @ camera_coords + camera_position
+        # Unproject: clip space -> camera space
+        camera_coords = inv_proj @ clip_coords
+        camera_coords = camera_coords / camera_coords[3]  # Perspective divide
+        
+        # Transform from camera space to world space
+        world_coords = inv_view @ camera_coords
         
         return world_coords[0], world_coords[1], world_coords[2]
     

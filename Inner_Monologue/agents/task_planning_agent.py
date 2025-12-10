@@ -58,7 +58,7 @@ AVAILABLE TOOLS:
    - Use before picking to know where the object is
    - Use for basket to know destination center
    - CRITICAL: Be very descriptive with object_name you pass to the detection (e.g., "a small red box", "a rectangular brown basket")
-   - CRITICAL: When detecting the basket, ALWAYS use The following name for "A brown rectangular basket on a light brown table"
+   - CRITICAL: When detecting the basket, ALWAYS use The following name for "A brown rectangular basket"
    - CRITICAL: When detecting any box, ALWAYS use The following name for "A small {color} box" where {color} is the color of the box (red, blue, green, yellow)
 
 3. pick(object_name: str, x: float, y: float, z: float)
