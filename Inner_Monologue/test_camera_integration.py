@@ -29,7 +29,7 @@ def test_camera_integration():
         # Default FOV is typically 60-90 degrees
         # Higher values = more zoom out (try 100-120 for wider view)
         fov = 130  # Wider field of view to see more of the scene
-        image = recognize_tool._get_camera_image(fov=fov)
+        image = recognize_tool._get_camera_image()
         print(f"   ✅ Camera image captured successfully with FOV={fov}°!")
         print(f"   Image size: {image.size}")
         print(f"   Image mode: {image.mode}")

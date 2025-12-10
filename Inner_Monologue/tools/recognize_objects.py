@@ -26,8 +26,8 @@ class RecognizeObjectsTool(BaseTool):
         # Initialize MDETR detection tool
         self.detection_tool = DetectionTool(
             environment=environment,
-            confidence_threshold=0.6,
-            iou_threshold=0.5
+            confidence_threshold=0.9,
+            iou_threshold=0.3
         )
         logger.info("Initialized DetectionTool for object recognition")
     
@@ -63,7 +63,7 @@ class RecognizeObjectsTool(BaseTool):
         """
         if hasattr(self.environment, 'get_camera_image'):
             # If environment has a method to get camera image
-            camera_data = self.environment.get_camera_image(fov=fov)
+            camera_data = self.environment.get_camera_image()
             
             # Handle dict return (LLM-TAMP format)
             if isinstance(camera_data, dict) and 'rgb' in camera_data:
@@ -101,11 +101,11 @@ class RecognizeObjectsTool(BaseTool):
         
         try:
             # Step 1: Capture camera image
-            image = self._get_camera_image(fov=fov)
+            image = self._get_camera_image()
             logger.info(f"Captured image of size: {image.size}")
             
             # Step 2: Run MDETR detection with broad prompt
-            prompt = "red box, blue box, green box, yellow box, brown basket and a robot on a light brown table"
+            prompt = "yellow box, green box, blue box, red box, brown basket and a robot on a light brown table"
             bboxes, scores, detected_objects = self.detection_tool.detect_objects(image, prompt)
             
             # Step 3: Extract unique object names (filter out "unknown")

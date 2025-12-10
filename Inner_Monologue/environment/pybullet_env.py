@@ -126,8 +126,8 @@ class InnerMonologueEnv:
             0: {
                 "name": "red box",
                 "color": [1, 0, 0, 1],
-                "w": 0.035,  # Small box from LLM-TAMP
-                "l": 0.035,
+                "w": 0.07,  # Small box from LLM-TAMP
+                "l": 0.07,
                 "h": 0.07,
                 "x": 0.39,   # Simplified from LLM-TAMP 0.3916
                 "y": -0.47,  # Simplified from LLM-TAMP -0.4744
@@ -146,8 +146,8 @@ class InnerMonologueEnv:
             2: {
                 "name": "green box",
                 "color": [0, 1, 0, 1],
-                "w": 0.035,  # Small box from LLM-TAMP
-                "l": 0.035,
+                "w": 0.07,  # Small box from LLM-TAMP
+                "l": 0.07,
                 "h": 0.07,
                 "x": 0.39,   # Match x position
                 "y": 0.47,   # Positive y for spacing
@@ -156,8 +156,8 @@ class InnerMonologueEnv:
             3: {
                 "name": "yellow box",
                 "color": [1, 1, 0, 1],
-                "w": 0.035,  # Small box from LLM-TAMP
-                "l": 0.035,
+                "w": 0.07,  # Small box from LLM-TAMP
+                "l": 0.07,
                 "h": 0.07,
                 "x": 0.39,   # Match x position
                 "y": 0.24,   # Between green and blue
@@ -171,16 +171,24 @@ class InnerMonologueEnv:
             raise RuntimeError("Environment not initialized. Call reset() first.")
         return self.env.get_observation()
     
-    def get_camera_image(self, width=None, height=None, fov=None, near=None, far=None):
+    def get_camera_image(self, width=None, height=None, fov=None, near=None, far=None, 
+                        use_robot_camera=False, camera_distance=2, camera_yaw=25, 
+                        camera_pitch=-40, camera_target=None):
         """
         Capture an image from the camera.
         
         Args:
-            width: image width in pixels (optional)
-            height: image height in pixels (optional)
-            fov: vertical field of view in degrees (optional)
-            near: near clipping plane distance (optional)
-            far: far clipping plane distance (optional)
+            width: image width in pixels (default: 1920)
+            height: image height in pixels (default: 1080)
+            fov: vertical field of view in degrees (default: 60)
+            near: near clipping plane distance (default: 0.01)
+            far: far clipping plane distance (default: 10)
+            use_robot_camera: if True, use robot's end-effector camera; 
+                            if False, use environment view (default: False)
+            camera_distance: distance from target for environment view (default: 1.5)
+            camera_yaw: yaw angle in degrees for environment view (default: 50)
+            camera_pitch: pitch angle in degrees for environment view (default: -35)
+            camera_target: target position [x, y, z] for environment view (default: center of workspace)
         
         Returns:
             dict: containing 'rgb', 'depth', 'segmentation', etc.
@@ -188,8 +196,70 @@ class InnerMonologueEnv:
         """
         if not self._initialized:
             raise RuntimeError("Environment not initialized. Call reset() first.")
-        # Access camera through the robot object
-        return self.env.robot.get_camera_image(width, height, fov, near, far)
+        
+        if use_robot_camera:
+            # Use the robot's end-effector camera
+            return self.env.robot.get_camera_image(width, height, fov, near, far)
+        else:
+            # Use environment camera view (third-person view)
+            import pybullet as p
+            import numpy as np
+            
+            # Default parameters
+            width = width or 1920
+            height = height or 1080
+            fov = fov or 60
+            near = near or 0.01
+            far = far or 10
+            
+            # Default camera target (center of workspace around the table)
+            if camera_target is None:
+                camera_target = [0.5, 0.0, 0.1]  # Looking at the workspace center
+            
+            # Compute view matrix using distance, yaw, and pitch
+            view_matrix = p.computeViewMatrixFromYawPitchRoll(
+                cameraTargetPosition=camera_target,
+                distance=camera_distance,
+                yaw=camera_yaw,
+                pitch=camera_pitch,
+                roll=0,
+                upAxisIndex=2
+            )
+            
+            # Compute projection matrix
+            aspect = float(width) / height
+            projection_matrix = p.computeProjectionMatrixFOV(
+                fov=fov,
+                aspect=aspect,
+                nearVal=near,
+                farVal=far
+            )
+            
+            # Capture image
+            img_width, img_height, rgb_img, depth_img, seg_img = p.getCameraImage(
+                width=width,
+                height=height,
+                viewMatrix=view_matrix,
+                projectionMatrix=projection_matrix,
+                renderer=p.ER_BULLET_HARDWARE_OPENGL
+            )
+            
+            # Convert images to numpy arrays
+            rgb_array = np.array(rgb_img, dtype=np.uint8).reshape(height, width, 4)[:, :, :3]  # Remove alpha
+            depth_array = np.array(depth_img, dtype=np.float32).reshape(height, width)
+            seg_array = np.array(seg_img, dtype=np.int32).reshape(height, width)
+            
+            return {
+                'rgb': rgb_array,
+                'depth': depth_array,
+                'segmentation': seg_array,
+                'camera_target': camera_target,
+                'camera_distance': camera_distance,
+                'camera_yaw': camera_yaw,
+                'camera_pitch': camera_pitch,
+                'view_matrix': view_matrix,
+                'projection_matrix': projection_matrix
+            }
     
     def check_goal(self) -> tuple:
         """Check if goal is achieved."""

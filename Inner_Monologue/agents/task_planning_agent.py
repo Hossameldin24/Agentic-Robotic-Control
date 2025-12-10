@@ -49,10 +49,9 @@ Your task is to pack boxes into a basket by making strategic tool calls.
 
 AVAILABLE TOOLS:
 
-1. recognize_objects(fov: float)   
+1. recognize_objects()   
    - Returns list of all object names in the scene
    - Call this FIRST to understand what objects exist
-   - if you think the results are incomplete, try increasing fov (field of view) to see more maximum fov value is 140
 
 2. detect(object_name: str)
    - Returns 3D center coordinates (x, y, z) of specified object in meters
